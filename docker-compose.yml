@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: testpilot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: testpilot
+      POSTGRES_PASSWORD: testpilot
+      POSTGRES_DB: testpilot
+    ports:
+      # 5433 on the host so it doesn't collide with a local Postgres on 5432.
+      - "5433:5432"
+    volumes:
+      - testpilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testpilot -d testpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  testpilot_pgdata:
