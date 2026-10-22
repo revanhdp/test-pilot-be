@@ -1,0 +1,6 @@
+# Single-package repo: this file only holds pnpm settings.
+# Dependencies whose install scripts are allowed to run.
+allowBuilds:
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true

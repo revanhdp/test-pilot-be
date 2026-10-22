@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+coverage/
+
+# Generated Prisma client (recreated by `pnpm install` via `prisma generate`)
+src/generated/
+
+# Test artifacts: screenshots and logs written by the runner
+storage/
+
+# Environment: only the example is committed
+.env
+.env.*
+!.env.example
+
+# Logs, OS and editor files
+*.log
+.DS_Store
+.idea/
+.vscode/
