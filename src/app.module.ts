@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { EnvironmentsModule } from './environments/environments.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { TestCasesModule } from './test-cases/test-cases.module.js';
+import { TestRunsModule } from './test-runs/test-runs.module.js';
 import { TestSuitesModule } from './test-suites/test-suites.module.js';
 
 @Module({
@@ -18,6 +19,7 @@ import { TestSuitesModule } from './test-suites/test-suites.module.js';
     EnvironmentsModule,
     TestSuitesModule,
     TestCasesModule,
+    TestRunsModule,
     ArtifactsModule,
   ],
   controllers: [HealthController],
