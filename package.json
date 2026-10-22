@@ -20,6 +20,7 @@
     "prisma:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "demo:site": "tsx demo-site/server.ts",
+    "demo:site:fixed": "DEMO_SITE_FIXED=1 tsx demo-site/server.ts",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "browsers:install": "playwright install chromium"

@@ -1,4 +1,4 @@
-import type { Page, Locator as PwLocator } from 'playwright';
+import type { Page, Locator as PwLocator, Response } from 'playwright';
 import {
   describeLocator,
   type Locator,
@@ -23,11 +23,19 @@ export async function runStep(step: TestStep, ctx: StepContext): Promise<void> {
   const { page, timeoutMs } = ctx;
 
   switch (step.action) {
-    case 'navigate':
-      await page.goto(resolveNavigationUrl(ctx.baseUrl, step.value), {
-        waitUntil: 'load',
-      });
+    case 'navigate': {
+      const response = await page.goto(
+        resolveNavigationUrl(ctx.baseUrl, step.value),
+        { waitUntil: 'load' },
+      );
+      // `goto` resolves for any page the browser could load, including a 404
+      // or 500 page, so the status is checked here. After redirects, this is
+      // the status of the page that was finally reached.
+      if (response && response.status() >= 400 && !step.allowErrorStatus) {
+        throw new StepFailure(describeErrorStatus(response));
+      }
       return;
+    }
 
     case 'click':
       await locate(page, step.target).click({ timeout: timeoutMs });
@@ -117,6 +125,12 @@ export async function runStep(step: TestStep, ctx: StepContext): Promise<void> {
       return;
     }
   }
+}
+
+function describeErrorStatus(response: Response): string {
+  const { pathname, search } = new URL(response.url());
+  const status = [response.status(), response.statusText()].filter(Boolean).join(' ');
+  return `GET ${pathname}${search} responded with HTTP ${status}. If an error page is expected here, turn on "Allow error status" for this step.`;
 }
 
 export function locate(page: Page, target: Locator): PwLocator {

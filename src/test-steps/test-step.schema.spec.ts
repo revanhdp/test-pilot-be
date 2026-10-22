@@ -68,6 +68,19 @@ describe('testStepSchema', () => {
     );
   });
 
+  it('accepts allowErrorStatus on navigate only as a boolean', () => {
+    expect(
+      testStepSchema.parse({ action: 'navigate', value: '/nope', allowErrorStatus: true }),
+    ).toEqual({ action: 'navigate', value: '/nope', allowErrorStatus: true });
+    expect(
+      testStepSchema.safeParse({ action: 'navigate', value: '/nope', allowErrorStatus: 'yes' }).success,
+    ).toBe(false);
+    // Other actions have no such option: it is dropped, not stored.
+    expect(
+      testStepSchema.parse({ action: 'click', target: '#a', allowErrorStatus: true }),
+    ).toEqual({ action: 'click', target: { type: 'css', value: '#a' } });
+  });
+
   it('limits the number of steps', () => {
     const steps = Array.from({ length: MAX_STEPS_PER_TEST + 1 }, () => ({
       action: 'navigate',
@@ -87,12 +100,41 @@ describe('step rows', () => {
     const rows = toStepRows(steps);
 
     expect(rows).toEqual([
-      { order: 1, action: 'navigate', target: null, value: '/login' },
-      { order: 2, action: 'press', target: null, value: 'Enter' },
-      { order: 3, action: 'click', target: { type: 'css', value: '#submit' }, value: null },
+      { order: 1, action: 'navigate', target: null, value: '/login', options: null },
+      { order: 2, action: 'press', target: null, value: 'Enter', options: null },
+      {
+        order: 3,
+        action: 'click',
+        target: { type: 'css', value: '#submit' },
+        value: null,
+        options: null,
+      },
     ]);
     expect(rows.map(fromStepRow)).toEqual(
       steps.map((step, index) => ({ ...step, order: index + 1 })),
     );
+  });
+
+  it('stores allowErrorStatus in options and restores it', () => {
+    const steps = testStepsSchema.parse([
+      { action: 'navigate', value: '/missing', allowErrorStatus: true },
+      { action: 'navigate', value: '/', allowErrorStatus: false },
+    ]);
+    const rows = toStepRows(steps);
+
+    expect(rows[0]!.options).toEqual({ allowErrorStatus: true });
+    expect(rows[1]!.options).toBeNull(); // false is the default, so nothing is stored
+    expect(fromStepRow(rows[0]!)).toEqual({
+      action: 'navigate',
+      value: '/missing',
+      allowErrorStatus: true,
+      order: 1,
+    });
+  });
+
+  it('reads rows saved before options existed', () => {
+    expect(
+      fromStepRow({ order: 1, action: 'navigate', target: null, value: '/', options: null }),
+    ).toEqual({ action: 'navigate', value: '/', order: 1 });
   });
 });

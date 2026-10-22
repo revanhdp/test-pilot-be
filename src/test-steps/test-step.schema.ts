@@ -38,7 +38,15 @@ const nonEmpty = (label: string, max: number) =>
 
 const stepVariants = z.discriminatedUnion('action', [
   // Navigation
-  z.object({ action: z.literal('navigate'), value: nonEmpty('URL or path', 2000) }),
+  z.object({
+    action: z.literal('navigate'),
+    value: nonEmpty('URL or path', 2000),
+    /**
+     * By default the step fails when the page answers HTTP 4xx/5xx. Turn this on
+     * for tests that deliberately open an error page (for example a custom 404).
+     */
+    allowErrorStatus: z.boolean().optional(),
+  }),
 
   // Interaction
   z.object({ action: z.literal('click'), target: locatorSchema }),
@@ -116,6 +124,8 @@ export interface TestStepRow {
   action: string;
   target: unknown;
   value: string | null;
+  /** Per-action flags such as `{ allowErrorStatus: true }`; null when none are set. */
+  options: unknown;
 }
 
 export function toStepRows(steps: TestStep[]): TestStepRow[] {
@@ -124,12 +134,17 @@ export function toStepRows(steps: TestStep[]): TestStepRow[] {
     action: step.action,
     target: 'target' in step && step.target ? step.target : null,
     value: 'value' in step ? step.value : null,
+    options:
+      step.action === 'navigate' && step.allowErrorStatus
+        ? { allowErrorStatus: true }
+        : null,
   }));
 }
 
 /** Rehydrates a stored step. Throws if the row no longer satisfies the schema. */
 export function fromStepRow(row: TestStepRow): OrderedTestStep {
   const step = testStepSchema.parse({
+    ...(typeof row.options === 'object' && row.options !== null ? row.options : {}),
     action: row.action,
     ...(row.target != null && { target: row.target }),
     ...(row.value != null && { value: row.value }),

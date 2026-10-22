@@ -179,6 +179,8 @@ model TestStep {
   action     String
   target     Json?
   value      String?
+  /// Per-action flags, e.g. { "allowErrorStatus": true } on a navigate step.
+  options    Json?
   createdAt  DateTime @default(now())
 
   testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)

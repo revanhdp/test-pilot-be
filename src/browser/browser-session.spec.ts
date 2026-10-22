@@ -95,6 +95,45 @@ describe('BrowserSession (integration)', () => {
     expect(result.errorMessage).toMatch(/blocked/);
   }, 30_000);
 
+  describe('navigate and HTTP error statuses', () => {
+    it('fails when the page answers HTTP 404, but keeps the evidence', async () => {
+      const result = await run('status-404', [{ action: 'navigate', value: '/nothing-here' }]);
+
+      expect(result.status).toBe('FAILED');
+      expect(result.failedStep).toBe(1);
+      expect(result.errorMessage).toContain('GET /nothing-here responded with HTTP 404');
+      expect(result.errorMessage).toContain('Allow error status');
+      expect(result.pageTitle).toBe('Not found · Acme Store');
+      expect(result.screenshot).not.toBeNull();
+    }, 30_000);
+
+    it('fails when the page answers HTTP 500', async () => {
+      const result = await run('status-500', [{ action: 'navigate', value: '/orders' }]);
+
+      expect(result.status).toBe('FAILED');
+      expect(result.errorMessage).toContain('GET /orders responded with HTTP 500');
+    }, 30_000);
+
+    it('opens the error page when allowErrorStatus is set, so its content can be checked', async () => {
+      const result = await run('status-allowed', [
+        { action: 'navigate', value: '/nothing-here', allowErrorStatus: true },
+        { action: 'assertVisible', target: { type: 'role', value: 'heading', name: 'Page not found' } },
+      ]);
+
+      expect(result.status).toBe('PASSED');
+    }, 30_000);
+
+    it('judges the page reached after a redirect, not the redirect itself', async () => {
+      // /account answers 302 to /login when signed out; the sign-in page itself is a 200.
+      const result = await run('status-redirect', [
+        { action: 'navigate', value: '/account' },
+        { action: 'assertUrl', value: '/login' },
+      ]);
+
+      expect(result.status).toBe('PASSED');
+    }, 30_000);
+  });
+
   it('isolates browser state between tests', async () => {
     // The previous login test set a session cookie; a fresh context must not have it.
     const result = await run('isolation', [

@@ -4,9 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { Prisma } from '../generated/prisma/client.js';
 import { ProjectsService } from '../projects/projects.service.js';
-import { toStepRows, type TestStep } from '../test-steps/test-step.schema.js';
+import { toStepCreateData } from '../test-steps/step-persistence.js';
 import type {
   CreateTestCaseInput,
   ListTestCasesQuery,
@@ -93,7 +92,7 @@ export class TestCasesService {
           expectedResult: input.expectedResult ?? null,
           status: input.status,
           createdById: userId,
-          steps: { create: this.stepRows(input.steps) },
+          steps: { create: toStepCreateData(input.steps) },
         },
         select: { id: true },
       });
@@ -125,7 +124,7 @@ export class TestCasesService {
       if (steps) {
         await tx.testStep.deleteMany({ where: { testCaseId: id } });
         await tx.testStep.createMany({
-          data: this.stepRows(steps).map((row) => ({ ...row, testCaseId: id })),
+          data: toStepCreateData(steps).map((row) => ({ ...row, testCaseId: id })),
         });
       }
     });
@@ -148,15 +147,5 @@ export class TestCasesService {
     });
     if (!suite) throw new NotFoundException('Test suite not found');
     return suite;
-  }
-
-  private stepRows(steps: TestStep[]) {
-    return toStepRows(steps).map((row) => ({
-      ...row,
-      target:
-        row.target === null
-          ? Prisma.DbNull
-          : (row.target as Prisma.InputJsonValue),
-    }));
   }
 }
