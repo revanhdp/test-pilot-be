@@ -6,6 +6,7 @@ import { ConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { EnvironmentsModule } from './environments/environments.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
+import { TestCasesModule } from './test-cases/test-cases.module.js';
 import { TestSuitesModule } from './test-suites/test-suites.module.js';
 
 @Module({
@@ -16,6 +17,7 @@ import { TestSuitesModule } from './test-suites/test-suites.module.js';
     ProjectsModule,
     EnvironmentsModule,
     TestSuitesModule,
+    TestCasesModule,
     ArtifactsModule,
   ],
   controllers: [HealthController],
