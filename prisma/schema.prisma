@@ -1,0 +1,293 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Identity ────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  projects            Project[]
+  createdTestCases    TestCase[]           @relation("TestCaseCreatedBy")
+  triggeredRuns       TestRun[]            @relation("TestRunTriggeredBy")
+
+  @@map("users")
+}
+
+/// Opaque, server-side sessions. Only a SHA-256 hash of the cookie token is stored.
+model Session {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// ─── Projects & environments ─────────────────────────────────────────────────
+
+model Project {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  userId      String   @db.Uuid
+  name        String
+  description String?
+  /// Per-project counters backing human-readable keys (TC-12, Run #7).
+  testCaseSeq Int      @default(0)
+  testRunSeq  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  environments Environment[]
+  testSuites   TestSuite[]
+  testCases    TestCase[]
+  testRuns     TestRun[]
+
+  @@index([userId])
+  @@map("projects")
+}
+
+enum EnvironmentType {
+  DEVELOPMENT
+  STAGING
+  PRODUCTION
+  CUSTOM
+}
+
+model Environment {
+  id        String          @id @default(uuid(7)) @db.Uuid
+  projectId String          @db.Uuid
+  name      String
+  baseUrl   String
+  type      EnvironmentType @default(CUSTOM)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testRuns TestRun[]
+
+  @@index([projectId])
+  @@map("environments")
+}
+
+// ─── Test design ─────────────────────────────────────────────────────────────
+
+model TestSuite {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  projectId   String   @db.Uuid
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testCases TestCase[]
+
+  @@index([projectId])
+  @@map("test_suites")
+}
+
+enum TestPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TestCategory {
+  FUNCTIONAL
+  NEGATIVE
+  EDGE_CASE
+  REGRESSION
+  ACCESSIBILITY
+  SECURITY
+}
+
+enum TestCaseStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model TestCase {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  projectId      String         @db.Uuid
+  suiteId        String         @db.Uuid
+  /// Sequential per project; rendered as TC-<number>.
+  number         Int
+  title          String
+  description    String?
+  priority       TestPriority   @default(MEDIUM)
+  category       TestCategory   @default(FUNCTIONAL)
+  expectedResult String?
+  status         TestCaseStatus @default(ACTIVE)
+  createdById    String?        @db.Uuid
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  suite     TestSuite    @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("TestCaseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  steps     TestStep[]
+  results   TestResult[]
+
+  @@unique([projectId, number])
+  @@index([suiteId])
+  @@map("test_cases")
+}
+
+/// One ordered action. `action`, `target` and `value` are validated by the
+/// step schema in the API (src/test-cases/steps.schema.ts), not by the database.
+model TestStep {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  testCaseId String   @db.Uuid
+  order      Int
+  action     String
+  target     Json?
+  value      String?
+  createdAt  DateTime @default(now())
+
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([testCaseId, order])
+  @@map("test_steps")
+}
+
+// ─── Execution ───────────────────────────────────────────────────────────────
+
+enum TestRunStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+  ERROR
+}
+
+model TestRun {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  projectId       String        @db.Uuid
+  environmentId   String?       @db.Uuid
+  number          Int
+  status          TestRunStatus @default(PENDING)
+  browser         String        @default("chromium")
+  /// Snapshots, so a run stays readable after its environment is edited or deleted.
+  environmentName String
+  baseUrl         String
+  errorMessage    String?
+  totalTests      Int           @default(0)
+  passedTests     Int           @default(0)
+  failedTests     Int           @default(0)
+  skippedTests    Int           @default(0)
+  triggeredById   String?       @db.Uuid
+  createdAt       DateTime      @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environment Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  triggeredBy User?        @relation("TestRunTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+  results     TestResult[]
+
+  @@unique([projectId, number])
+  @@index([projectId, createdAt])
+  @@map("test_runs")
+}
+
+enum TestResultStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+  SKIPPED
+  ERROR
+}
+
+model TestResult {
+  id               String           @id @default(uuid(7)) @db.Uuid
+  testRunId        String           @db.Uuid
+  testCaseId       String?          @db.Uuid
+  /// Execution order within the run.
+  position         Int
+  status           TestResultStatus @default(PENDING)
+  durationMs       Int?
+  errorMessage     String?
+  /// `order` of the step that failed, when one did.
+  failedStep       Int?
+  /// The test case (title, key, steps…) exactly as it was when the run was created.
+  testCaseSnapshot Json
+  /// Per-step outcome: [{ order, status, durationMs, error? }].
+  stepResults      Json?
+  finalUrl         String?
+  pageTitle        String?
+  createdAt        DateTime         @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+
+  testRun   TestRun    @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  testCase  TestCase?  @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  artifacts Artifact[]
+
+  @@index([testRunId, position])
+  @@index([testCaseId])
+  @@map("test_results")
+}
+
+enum ArtifactType {
+  SCREENSHOT
+  VIDEO
+  TRACE
+  CONSOLE_LOG
+  NETWORK_LOG
+  DOM_SNAPSHOT
+}
+
+model Artifact {
+  id           String       @id @default(uuid(7)) @db.Uuid
+  testResultId String       @db.Uuid
+  type         ArtifactType
+  /// Relative to STORAGE_DIR.
+  path         String
+  mimeType     String
+  sizeBytes    Int?
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+
+  testResult TestResult @relation(fields: [testResultId], references: [id], onDelete: Cascade)
+
+  @@index([testResultId])
+  @@map("artifacts")
+}
