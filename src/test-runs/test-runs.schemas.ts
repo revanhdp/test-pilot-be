@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { TestCategory, TestPriority } from '../generated/prisma/enums.js';
+import type { StepOutcome } from '../browser/browser-session.js';
 import type { OrderedTestStep } from '../test-steps/test-step.schema.js';
 
 /**
@@ -33,5 +34,20 @@ export interface TestCaseSnapshot {
   priority: TestPriority;
   category: TestCategory;
   expectedResult: string | null;
+  /** Absent on runs created before sign-in existed. */
+  startSignedIn?: boolean;
   steps: OrderedTestStep[];
+}
+
+/**
+ * The environment's sign-in steps, frozen on the run when it is created, and
+ * how they went once the runner performed them.
+ */
+export interface RunSignIn {
+  steps: OrderedTestStep[];
+  status?: 'PASSED' | 'FAILED' | 'ERROR';
+  durationMs?: number;
+  errorMessage?: string | null;
+  failedStep?: number | null;
+  stepResults?: StepOutcome[];
 }

@@ -91,6 +91,7 @@ export class TestCasesService {
           category: input.category,
           expectedResult: input.expectedResult ?? null,
           status: input.status,
+          startSignedIn: input.startSignedIn,
           createdById: userId,
           steps: { create: toStepCreateData(input.steps) },
         },
@@ -124,7 +125,10 @@ export class TestCasesService {
       if (steps) {
         await tx.testStep.deleteMany({ where: { testCaseId: id } });
         await tx.testStep.createMany({
-          data: toStepCreateData(steps).map((row) => ({ ...row, testCaseId: id })),
+          data: toStepCreateData(steps).map((row) => ({
+            ...row,
+            testCaseId: id,
+          })),
         });
       }
     });

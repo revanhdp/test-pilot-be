@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AiModule } from './ai/ai.module.js';
 import { ArtifactsModule } from './artifacts/artifacts.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './common/health.controller.js';
@@ -23,6 +24,7 @@ import { TestSuitesModule } from './test-suites/test-suites.module.js';
     TestRunsModule,
     ArtifactsModule,
     OverviewModule,
+    AiModule,
   ],
   controllers: [HealthController],
 })

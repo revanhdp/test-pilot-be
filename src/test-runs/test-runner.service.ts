@@ -1,14 +1,32 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ArtifactStorage } from '../artifacts/artifact-storage.service.js';
-import type { BrowserSession } from '../browser/browser-session.js';
+import type {
+  BrowserSession,
+  SessionState,
+  TestExecution,
+} from '../browser/browser-session.js';
 import { BrowserService } from '../browser/browser.service.js';
 import { formatStepError } from '../browser/step-error.js';
 import { AppConfig } from '../config/app-config.js';
 import { PrismaService } from '../database/prisma.service.js';
-import type { Prisma, TestResult, TestRun } from '../generated/prisma/client.js';
-import type { TestCaseSnapshot } from './test-runs.schemas.js';
+import type {
+  Prisma,
+  TestResult,
+  TestRun,
+} from '../generated/prisma/client.js';
+import type { RunSignIn, TestCaseSnapshot } from './test-runs.schemas.js';
 
 type Outcome = 'passed' | 'failed' | 'skipped';
+
+/** The run's one sign-in: the session it produced, or why there is none. */
+type SignInResult =
+  | { status: 'PASSED'; sessionState: SessionState }
+  | {
+      status: 'FAILED' | 'ERROR';
+      message: string;
+      execution: TestExecution | null;
+      screenshotPath: string | null;
+    };
 
 /**
  * Executes runs in-process with bounded concurrency. Runs are queued in memory;
@@ -67,14 +85,18 @@ export class TestRunnerService implements OnApplicationBootstrap {
     try {
       session = await this.browser.openSession();
     } catch (error) {
-      await this.failRun(runId, `Could not start the browser: ${formatStepError(error)}`);
+      await this.failRun(
+        runId,
+        `Could not start the browser: ${formatStepError(error)}`,
+      );
       return;
     }
 
     const tally: Record<Outcome, number> = { passed: 0, failed: 0, skipped: 0 };
     try {
+      const signIn = await this.signInOnce(session, run);
       for (const result of run.results) {
-        tally[await this.executeResult(session, run, result)]++;
+        tally[await this.executeResult(session, run, result, signIn)]++;
         await this.prisma.testRun.update({
           where: { id: runId },
           data: {
@@ -100,10 +122,74 @@ export class TestRunnerService implements OnApplicationBootstrap {
     );
   }
 
+  /**
+   * Performs the environment's sign-in steps once, before any test, when at
+   * least one test of the run starts signed in. The session stays in memory.
+   */
+  private async signInOnce(
+    session: BrowserSession,
+    run: TestRun & { results: TestResult[] },
+  ): Promise<SignInResult | null> {
+    const signIn = run.signIn as RunSignIn | null;
+    const needed = run.results.some((result) => {
+      const snapshot = result.testCaseSnapshot as unknown as TestCaseSnapshot;
+      return snapshot.startSignedIn && snapshot.steps.length > 0;
+    });
+    if (!signIn || !needed) return null;
+
+    const screenshotPath = this.storage.resultFile(
+      run.id,
+      'sign-in',
+      'screenshot.png',
+    );
+    let outcome: SignInResult;
+    let record: RunSignIn;
+    try {
+      const { execution, sessionState } = await session.signIn({
+        baseUrl: run.baseUrl,
+        steps: signIn.steps,
+        screenshotPath: this.storage.absolute(screenshotPath),
+      });
+      record = {
+        ...signIn,
+        status: execution.status,
+        durationMs: execution.durationMs,
+        errorMessage: execution.errorMessage,
+        failedStep: execution.failedStep,
+        stepResults: execution.steps,
+      };
+      outcome = sessionState
+        ? { status: 'PASSED', sessionState }
+        : {
+            status: 'FAILED',
+            message: `Sign-in failed at step ${execution.failedStep}: ${execution.errorMessage}`,
+            execution,
+            screenshotPath: execution.screenshot ? screenshotPath : null,
+          };
+    } catch (error) {
+      // The browser broke while signing in: an engine error, not a website failure.
+      const message = `Sign-in could not run: ${formatStepError(error)}`;
+      record = { ...signIn, status: 'ERROR', errorMessage: message };
+      outcome = {
+        status: 'ERROR',
+        message,
+        execution: null,
+        screenshotPath: null,
+      };
+    }
+
+    await this.prisma.testRun.update({
+      where: { id: run.id },
+      data: { signIn: record as unknown as Prisma.InputJsonValue },
+    });
+    return outcome;
+  }
+
   private async executeResult(
     session: BrowserSession,
     run: TestRun,
     result: TestResult,
+    signIn: SignInResult | null,
   ): Promise<Outcome> {
     const snapshot = result.testCaseSnapshot as unknown as TestCaseSnapshot;
 
@@ -120,18 +206,30 @@ export class TestRunnerService implements OnApplicationBootstrap {
       return 'skipped';
     }
 
+    if (snapshot.startSignedIn && signIn?.status !== 'PASSED') {
+      return this.failWithoutSession(result, snapshot, signIn);
+    }
+
     const startedAt = new Date();
     await this.prisma.testResult.update({
       where: { id: result.id },
       data: { status: 'RUNNING', startedAt },
     });
 
-    const screenshotPath = this.storage.resultFile(run.id, result.id, 'screenshot.png');
+    const screenshotPath = this.storage.resultFile(
+      run.id,
+      result.id,
+      'screenshot.png',
+    );
     try {
       const execution = await session.execute({
         baseUrl: run.baseUrl,
         steps: snapshot.steps,
         screenshotPath: this.storage.absolute(screenshotPath),
+        sessionState:
+          snapshot.startSignedIn && signIn?.status === 'PASSED'
+            ? signIn.sessionState
+            : undefined,
       });
 
       await this.prisma.testResult.update({
@@ -152,7 +250,10 @@ export class TestRunnerService implements OnApplicationBootstrap {
                 path: screenshotPath,
                 mimeType: 'image/png',
                 sizeBytes: execution.screenshot.sizeBytes,
-                metadata: { url: execution.finalUrl, title: execution.pageTitle },
+                metadata: {
+                  url: execution.finalUrl,
+                  title: execution.pageTitle,
+                },
               },
             },
           }),
@@ -172,6 +273,54 @@ export class TestRunnerService implements OnApplicationBootstrap {
       });
       return 'failed';
     }
+  }
+
+  /**
+   * A test that needs the session can't run without it. It fails (a broken sign-in
+   * is a real failure, not a skip) with the sign-in page as evidence; its own steps
+   * never ran.
+   */
+  private async failWithoutSession(
+    result: TestResult,
+    snapshot: TestCaseSnapshot,
+    signIn: Exclude<SignInResult, { status: 'PASSED' }> | null,
+  ): Promise<Outcome> {
+    const execution = signIn?.execution ?? null;
+    await this.prisma.testResult.update({
+      where: { id: result.id },
+      data: {
+        status: signIn?.status === 'ERROR' ? 'ERROR' : 'FAILED',
+        errorMessage:
+          signIn?.message ??
+          'This test starts signed in, but the run has no sign-in steps',
+        durationMs: 0,
+        stepResults: snapshot.steps.map((step) => ({
+          order: step.order,
+          status: 'SKIPPED',
+          durationMs: 0,
+        })),
+        finalUrl: execution?.finalUrl ?? null,
+        pageTitle: execution?.pageTitle ?? null,
+        finishedAt: new Date(),
+        ...(signIn?.screenshotPath &&
+          execution?.screenshot && {
+            artifacts: {
+              create: {
+                type: 'SCREENSHOT',
+                path: signIn.screenshotPath,
+                mimeType: 'image/png',
+                sizeBytes: execution.screenshot.sizeBytes,
+                metadata: {
+                  url: execution.finalUrl,
+                  title: execution.pageTitle,
+                  signIn: true,
+                },
+              },
+            },
+          }),
+      },
+    });
+    return 'failed';
   }
 
   private async failRun(runId: string, message: string): Promise<void> {
@@ -197,7 +346,10 @@ export class TestRunnerService implements OnApplicationBootstrap {
       select: { id: true },
     });
     for (const { id } of stale) {
-      await this.failRun(id, 'Interrupted: the server stopped before this run finished');
+      await this.failRun(
+        id,
+        'Interrupted: the server stopped before this run finished',
+      );
     }
     if (stale.length > 0) {
       this.logger.warn(`Marked ${stale.length} interrupted run(s) as ERROR`);

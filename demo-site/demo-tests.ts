@@ -1,4 +1,7 @@
-import type { TestCategory, TestPriority } from '../src/generated/prisma/enums.js';
+import type {
+  TestCategory,
+  TestPriority,
+} from '../src/generated/prisma/enums.js';
 import { DEMO_CREDENTIALS } from './app.js';
 
 /** Test case definitions for the demo site. Steps are validated by the step schema when used. */
@@ -8,6 +11,8 @@ export interface DemoTestCase {
   category: TestCategory;
   description?: string;
   expectedResult: string;
+  /** Begin with the session left by the project's sign-in steps. */
+  startSignedIn?: boolean;
   steps: unknown[];
 }
 
@@ -22,6 +27,8 @@ export interface DemoProject {
   key: string;
   name: string;
   description: string;
+  /** Sign-in steps of the "Local demo" environment, performed once per run. */
+  signInSteps?: unknown[];
   suites: DemoSuite[];
 }
 
@@ -34,7 +41,18 @@ const acmeStore: DemoProject = {
   key: 'acme-store',
   name: 'Acme Store',
   description:
-    'Demo storefront served locally by `pnpm demo:site`. Five tests pass; the checkout validation test fails because of a planted bug.',
+    'Demo storefront served locally by `pnpm demo:site`. Six tests pass; the checkout validation test fails because of a planted bug.',
+  signInSteps: [
+    { action: 'navigate', value: '/login' },
+    { action: 'fill', target: label('Email'), value: DEMO_CREDENTIALS.email },
+    {
+      action: 'fill',
+      target: label('Password'),
+      value: DEMO_CREDENTIALS.password,
+    },
+    { action: 'click', target: button('Sign in') },
+    { action: 'assertUrl', value: '/account' },
+  ],
   suites: [
     {
       name: 'Smoke',
@@ -59,7 +77,11 @@ const acmeStore: DemoProject = {
             'Navigate fails on HTTP 4xx/5xx by default. This test opens a page that is meant to answer 404, so the step has "Allow error status" turned on and the test checks the error page itself.',
           expectedResult: 'The "Page not found" page is shown.',
           steps: [
-            { action: 'navigate', value: '/this-page-does-not-exist', allowErrorStatus: true },
+            {
+              action: 'navigate',
+              value: '/this-page-does-not-exist',
+              allowErrorStatus: true,
+            },
             { action: 'assertVisible', target: heading('Page not found') },
           ],
         },
@@ -76,8 +98,16 @@ const acmeStore: DemoProject = {
           expectedResult: 'The user lands on their account page.',
           steps: [
             { action: 'navigate', value: '/login' },
-            { action: 'fill', target: label('Email'), value: DEMO_CREDENTIALS.email },
-            { action: 'fill', target: label('Password'), value: DEMO_CREDENTIALS.password },
+            {
+              action: 'fill',
+              target: label('Email'),
+              value: DEMO_CREDENTIALS.email,
+            },
+            {
+              action: 'fill',
+              target: label('Password'),
+              value: DEMO_CREDENTIALS.password,
+            },
             { action: 'click', target: button('Sign in') },
             { action: 'assertUrl', value: '/account' },
             { action: 'assertText', target: 'h1', value: 'Welcome back' },
@@ -94,8 +124,27 @@ const acmeStore: DemoProject = {
             { action: 'fill', target: '#email', value: DEMO_CREDENTIALS.email },
             { action: 'fill', target: '#password', value: 'wrong-password' },
             { action: 'click', target: button('Sign in') },
-            { action: 'assertText', target: { type: 'role', value: 'alert' }, value: 'Invalid email or password' },
+            {
+              action: 'assertText',
+              target: { type: 'role', value: 'alert' },
+              value: 'Invalid email or password',
+            },
             { action: 'assertUrl', value: '/login' },
+          ],
+        },
+        {
+          title: 'Account page greets a signed-in user',
+          priority: 'HIGH',
+          category: 'FUNCTIONAL',
+          description:
+            'Starts signed in: the run signs in once with the environment’s sign-in steps, so this test opens the protected page directly.',
+          expectedResult:
+            'The account page opens without asking to sign in again.',
+          startSignedIn: true,
+          steps: [
+            { action: 'navigate', value: '/account' },
+            { action: 'assertUrl', value: '/account' },
+            { action: 'assertText', target: 'h1', value: 'Welcome back' },
           ],
         },
       ],
@@ -111,10 +160,18 @@ const acmeStore: DemoProject = {
           expectedResult: 'Payment succeeds and an order number is shown.',
           steps: [
             { action: 'navigate', value: '/checkout' },
-            { action: 'fill', target: label('Card number'), value: '4242 4242 4242 4242' },
+            {
+              action: 'fill',
+              target: label('Card number'),
+              value: '4242 4242 4242 4242',
+            },
             { action: 'fill', target: label('Expiry'), value: '12/30' },
             { action: 'click', target: button('Pay $49.00') },
-            { action: 'assertText', target: { type: 'role', value: 'alert' }, value: 'Payment successful' },
+            {
+              action: 'assertText',
+              target: { type: 'role', value: 'alert' },
+              value: 'Payment successful',
+            },
           ],
         },
         {
@@ -123,13 +180,22 @@ const acmeStore: DemoProject = {
           category: 'NEGATIVE',
           description:
             'Planted bug: an invalid card number makes the payment API answer HTTP 500, so the page shows a generic error instead of a validation message.',
-          expectedResult: 'A "Card number is invalid" validation message appears.',
+          expectedResult:
+            'A "Card number is invalid" validation message appears.',
           steps: [
             { action: 'navigate', value: '/checkout' },
-            { action: 'fill', target: label('Card number'), value: '4111 1111' },
+            {
+              action: 'fill',
+              target: label('Card number'),
+              value: '4111 1111',
+            },
             { action: 'fill', target: label('Expiry'), value: '12/30' },
             { action: 'click', target: button('Pay $49.00') },
-            { action: 'assertText', target: { type: 'role', value: 'alert' }, value: 'Card number is invalid' },
+            {
+              action: 'assertText',
+              target: { type: 'role', value: 'alert' },
+              value: 'Card number is invalid',
+            },
           ],
         },
       ],
@@ -161,7 +227,10 @@ const bugHunt: DemoProject = {
           expectedResult: 'The "Summer Deals" page opens.',
           steps: [
             { action: 'navigate', value: '/' },
-            { action: 'click', target: { type: 'role', value: 'link', name: 'Deals' } },
+            {
+              action: 'click',
+              target: { type: 'role', value: 'link', name: 'Deals' },
+            },
             { action: 'assertVisible', target: heading('Summer Deals') },
           ],
         },
@@ -183,8 +252,9 @@ const bugHunt: DemoProject = {
           priority: 'MEDIUM',
           category: 'REGRESSION',
           description:
-            'Planted bug: the search field\'s id changed from #search-box to #search-input, so this test, which still uses the old id, can no longer find it. Fix the test by locating the field by its label instead of a CSS id.',
-          expectedResult: 'The query is typed into the search field and submitted.',
+            "Planted bug: the search field's id changed from #search-box to #search-input, so this test, which still uses the old id, can no longer find it. Fix the test by locating the field by its label instead of a CSS id.",
+          expectedResult:
+            'The query is typed into the search field and submitted.',
           steps: [
             { action: 'navigate', value: '/' },
             { action: 'fill', target: '#search-box', value: 'backpack' },
@@ -203,12 +273,17 @@ const bugHunt: DemoProject = {
           category: 'NEGATIVE',
           description:
             'Planted bug: the newsletter form accepts any text as an email address and says "Thanks for subscribing!".',
-          expectedResult: 'A validation message "Enter a valid email address" appears.',
+          expectedResult:
+            'A validation message "Enter a valid email address" appears.',
           steps: [
             { action: 'navigate', value: '/newsletter' },
             { action: 'fill', target: label('Email'), value: 'not-an-email' },
             { action: 'click', target: button('Subscribe') },
-            { action: 'assertText', target: '#newsletter-message', value: 'valid email' },
+            {
+              action: 'assertText',
+              target: '#newsletter-message',
+              value: 'valid email',
+            },
           ],
         },
       ],
@@ -235,10 +310,15 @@ const bugHunt: DemoProject = {
           category: 'FUNCTIONAL',
           description:
             'Planted bug: the report takes 12 seconds to load, longer than the step timeout (10 s by default).',
-          expectedResult: 'The report status changes to "Report ready" in a reasonable time.',
+          expectedResult:
+            'The report status changes to "Report ready" in a reasonable time.',
           steps: [
             { action: 'navigate', value: '/reports' },
-            { action: 'assertText', target: '#report-status', value: 'Report ready' },
+            {
+              action: 'assertText',
+              target: '#report-status',
+              value: 'Report ready',
+            },
           ],
         },
       ],
@@ -253,7 +333,8 @@ const bugHunt: DemoProject = {
           category: 'SECURITY',
           description:
             'Planted bug: /admin has no authentication check, so anyone can open it and see the list of users.',
-          expectedResult: 'A signed-out visitor is redirected to the sign-in page.',
+          expectedResult:
+            'A signed-out visitor is redirected to the sign-in page.',
           steps: [
             { action: 'navigate', value: '/admin' },
             { action: 'assertUrl', value: '/login' },
@@ -263,11 +344,16 @@ const bugHunt: DemoProject = {
           title: 'Product images have text alternatives',
           priority: 'MEDIUM',
           category: 'ACCESSIBILITY',
-          description: 'Planted bug: the Trail Backpack image has no alt text, so screen readers cannot describe it.',
-          expectedResult: 'The product image is exposed to assistive technology as "Trail Backpack".',
+          description:
+            'Planted bug: the Trail Backpack image has no alt text, so screen readers cannot describe it.',
+          expectedResult:
+            'The product image is exposed to assistive technology as "Trail Backpack".',
           steps: [
             { action: 'navigate', value: '/' },
-            { action: 'assertVisible', target: { type: 'role', value: 'img', name: 'Trail Backpack' } },
+            {
+              action: 'assertVisible',
+              target: { type: 'role', value: 'img', name: 'Trail Backpack' },
+            },
           ],
         },
       ],

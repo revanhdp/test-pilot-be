@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { signInStepsData } from './sign-in-steps.js';
 import type {
   CreateEnvironmentInput,
   UpdateEnvironmentInput,
@@ -31,12 +32,17 @@ export class EnvironmentsService {
 
   async create(userId: string, input: CreateEnvironmentInput) {
     await this.projects.assertAccess(userId, input.projectId);
-    return this.prisma.environment.create({ data: input });
+    return this.prisma.environment.create({
+      data: { ...input, signInSteps: signInStepsData(input.signInSteps) },
+    });
   }
 
   async update(userId: string, id: string, input: UpdateEnvironmentInput) {
     await this.get(userId, id);
-    return this.prisma.environment.update({ where: { id }, data: input });
+    return this.prisma.environment.update({
+      where: { id },
+      data: { ...input, signInSteps: signInStepsData(input.signInSteps) },
+    });
   }
 
   async remove(userId: string, id: string): Promise<void> {

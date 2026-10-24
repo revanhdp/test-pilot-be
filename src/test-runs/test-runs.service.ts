@@ -4,14 +4,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import type { Prisma } from '../generated/prisma/client.js';
+import type { Environment, Prisma } from '../generated/prisma/client.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { formatTestCaseKey } from '../test-cases/test-case-key.js';
-import { fromStepRow } from '../test-steps/test-step.schema.js';
+import {
+  fromStepRow,
+  testStepsSchema,
+} from '../test-steps/test-step.schema.js';
 import { TestRunnerService } from './test-runner.service.js';
 import type {
   CreateTestRunInput,
   ListTestRunsQuery,
+  RunSignIn,
   TestCaseSnapshot,
 } from './test-runs.schemas.js';
 
@@ -38,6 +42,8 @@ export class TestRunsService {
       where: { projectId: query.projectId },
       orderBy: { createdAt: 'desc' },
       take: query.limit,
+      // Sign-in steps hold typed values (passwords); only `get` returns them, redacted.
+      omit: { signIn: true },
       include: { triggeredBy: { select: { id: true, name: true } } },
     });
   }
@@ -59,7 +65,7 @@ export class TestRunsService {
       },
     });
     if (!run) throw new NotFoundException('Test run not found');
-    return run;
+    return { ...run, signIn: redactSignIn(run.signIn as RunSignIn | null) };
   }
 
   async create(userId: string, input: CreateTestRunInput) {
@@ -78,6 +84,7 @@ export class TestRunsService {
       );
     }
     const snapshots = testCases.map((testCase) => this.snapshot(testCase));
+    const signIn = this.signInFor(environment, snapshots);
 
     const run = await this.prisma.$transaction(async (tx) => {
       const { testRunSeq } = await tx.project.update({
@@ -94,11 +101,14 @@ export class TestRunsService {
           baseUrl: environment.baseUrl,
           triggeredById: userId,
           totalTests: testCases.length,
+          ...(signIn && { signIn: signIn as unknown as Prisma.InputJsonValue }),
           results: {
             create: testCases.map((testCase, index) => ({
               testCaseId: testCase.id,
               position: index + 1,
-              testCaseSnapshot: snapshots[index] as unknown as Prisma.InputJsonValue,
+              testCaseSnapshot: snapshots[
+                index
+              ] as unknown as Prisma.InputJsonValue,
             })),
           },
         },
@@ -143,6 +153,36 @@ export class TestRunsService {
     });
   }
 
+  /**
+   * Freezes the environment's sign-in steps on the run when any of its tests
+   * start signed in. Refuses the run if the environment has none to offer.
+   */
+  private signInFor(
+    environment: Environment,
+    snapshots: TestCaseSnapshot[],
+  ): RunSignIn | null {
+    const signedIn = snapshots.filter(
+      (s) => s.startSignedIn && s.steps.length > 0,
+    );
+    if (signedIn.length === 0) return null;
+
+    const parsed = testStepsSchema.safeParse(environment.signInSteps ?? []);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        `The sign-in steps of “${environment.name}” are no longer valid. Open them and save again.`,
+      );
+    }
+    if (parsed.data.length === 0) {
+      const keys = signedIn.map((s) => s.key).join(', ');
+      throw new BadRequestException(
+        `${keys} ${signedIn.length === 1 ? 'starts' : 'start'} signed in, but “${environment.name}” has no sign-in steps. Add them to the environment, or turn off “Start signed in”.`,
+      );
+    }
+    return {
+      steps: parsed.data.map((step, index) => ({ ...step, order: index + 1 })),
+    };
+  }
+
   private snapshot(testCase: TestCaseForRun): TestCaseSnapshot {
     const key = formatTestCaseKey(testCase.number);
     try {
@@ -153,6 +193,7 @@ export class TestRunsService {
         priority: testCase.priority,
         category: testCase.category,
         expectedResult: testCase.expectedResult,
+        startSignedIn: testCase.startSignedIn,
         steps: testCase.steps.map(fromStepRow),
       };
     } catch {
@@ -161,4 +202,15 @@ export class TestRunsService {
       );
     }
   }
+}
+
+/** What a run shows of its sign-in: typed values (passwords) never leave the server. */
+function redactSignIn(signIn: RunSignIn | null): RunSignIn | null {
+  if (!signIn) return null;
+  return {
+    ...signIn,
+    steps: signIn.steps.map((step) =>
+      step.action === 'fill' ? { ...step, value: '••••••' } : step,
+    ),
+  };
 }

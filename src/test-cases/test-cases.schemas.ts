@@ -15,6 +15,7 @@ const testCaseFields = {
   category: z.enum(TestCategory),
   expectedResult: nullableText(2000),
   status: z.enum(TestCaseStatus),
+  startSignedIn: z.boolean(),
   steps: testStepsSchema,
 };
 
@@ -23,6 +24,7 @@ export const createTestCaseSchema = z.object({
   priority: testCaseFields.priority.default('MEDIUM'),
   category: testCaseFields.category.default('FUNCTIONAL'),
   status: testCaseFields.status.default('ACTIVE'),
+  startSignedIn: testCaseFields.startSignedIn.default(false),
   steps: testCaseFields.steps.default([]),
 });
 export type CreateTestCaseInput = z.output<typeof createTestCaseSchema>;

@@ -12,22 +12,30 @@ import { hash } from '@node-rs/argon2';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { demoProjects } from '../demo-site/demo-tests.js';
 import { AppConfig } from '../src/config/app-config.js';
-import { PrismaClient } from '../src/generated/prisma/client.js';
+import { Prisma, PrismaClient } from '../src/generated/prisma/client.js';
 import { toStepCreateData } from '../src/test-steps/step-persistence.js';
 import { testStepsSchema } from '../src/test-steps/test-step.schema.js';
 
-const DEMO_USER = { email: 'demo@testpilot.dev', password: 'testpilot', name: 'Demo User' };
+const DEMO_USER = {
+  email: 'demo@testpilot.dev',
+  password: 'testpilot',
+  name: 'Demo User',
+};
 const DEMO_SITE_URL = `http://localhost:${process.env.DEMO_SITE_PORT ?? 4100}`;
 
 async function main() {
   const wanted = process.argv.slice(2);
-  const unknown = wanted.filter((key) => !demoProjects.some((project) => project.key === key));
+  const unknown = wanted.filter(
+    (key) => !demoProjects.some((project) => project.key === key),
+  );
   if (unknown.length > 0) {
     throw new Error(
       `Unknown project "${unknown.join('", "')}". Available: ${demoProjects.map((p) => p.key).join(', ')}`,
     );
   }
-  const selected = demoProjects.filter((project) => wanted.length === 0 || wanted.includes(project.key));
+  const selected = demoProjects.filter(
+    (project) => wanted.length === 0 || wanted.includes(project.key),
+  );
 
   const config = AppConfig.fromEnvironment();
   const prisma = new PrismaClient({
@@ -46,7 +54,9 @@ async function main() {
     });
 
     for (const demo of selected) {
-      await prisma.project.deleteMany({ where: { userId: user.id, name: demo.name } });
+      await prisma.project.deleteMany({
+        where: { userId: user.id, name: demo.name },
+      });
 
       const project = await prisma.project.create({
         data: {
@@ -54,7 +64,16 @@ async function main() {
           name: demo.name,
           description: demo.description,
           environments: {
-            create: { name: 'Local demo', baseUrl: DEMO_SITE_URL, type: 'DEVELOPMENT' },
+            create: {
+              name: 'Local demo',
+              baseUrl: DEMO_SITE_URL,
+              type: 'DEVELOPMENT',
+              ...(demo.signInSteps && {
+                signInSteps: testStepsSchema.parse(
+                  demo.signInSteps,
+                ) as Prisma.InputJsonValue,
+              }),
+            },
           },
         },
       });
@@ -62,7 +81,11 @@ async function main() {
       let number = 0;
       for (const suite of demo.suites) {
         const { id: suiteId } = await prisma.testSuite.create({
-          data: { projectId: project.id, name: suite.name, description: suite.description },
+          data: {
+            projectId: project.id,
+            name: suite.name,
+            description: suite.description,
+          },
         });
         for (const testCase of suite.testCases) {
           const steps = testStepsSchema.parse(testCase.steps);
@@ -76,6 +99,7 @@ async function main() {
               priority: testCase.priority,
               category: testCase.category,
               expectedResult: testCase.expectedResult,
+              startSignedIn: testCase.startSignedIn ?? false,
               createdById: user.id,
               steps: { create: toStepCreateData(steps) },
             },
@@ -90,8 +114,12 @@ async function main() {
       console.log(`Seeded "${demo.name}" with ${number} test cases.`);
     }
 
-    console.log(`Sign in to TestPilot as ${DEMO_USER.email} / ${DEMO_USER.password}`);
-    console.log(`Start the target site with: pnpm demo:site  (${DEMO_SITE_URL})`);
+    console.log(
+      `Sign in to TestPilot as ${DEMO_USER.email} / ${DEMO_USER.password}`,
+    );
+    console.log(
+      `Start the target site with: pnpm demo:site  (${DEMO_SITE_URL})`,
+    );
   } finally {
     await prisma.$disconnect();
   }

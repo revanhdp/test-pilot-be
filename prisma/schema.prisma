@@ -89,13 +89,16 @@ enum EnvironmentType {
 }
 
 model Environment {
-  id        String          @id @default(uuid(7)) @db.Uuid
-  projectId String          @db.Uuid
-  name      String
-  baseUrl   String
-  type      EnvironmentType @default(CUSTOM)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  id          String          @id @default(uuid(7)) @db.Uuid
+  projectId   String          @db.Uuid
+  name        String
+  baseUrl     String
+  type        EnvironmentType @default(CUSTOM)
+  /// Steps that sign in to this environment (same contract as test steps). A run
+  /// performs them once; tests that start signed in reuse the session.
+  signInSteps Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   testRuns TestRun[]
@@ -155,6 +158,8 @@ model TestCase {
   category       TestCategory   @default(FUNCTIONAL)
   expectedResult String?
   status         TestCaseStatus @default(ACTIVE)
+  /// Begin with the session left by the environment's sign-in steps.
+  startSignedIn  Boolean        @default(false)
   createdById    String?        @db.Uuid
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -209,6 +214,9 @@ model TestRun {
   /// Snapshots, so a run stays readable after its environment is edited or deleted.
   environmentName String
   baseUrl         String
+  /// The environment's sign-in steps frozen at creation, plus how they went:
+  /// { steps, status?, durationMs?, errorMessage?, failedStep?, stepResults? }.
+  signIn          Json?
   errorMessage    String?
   totalTests      Int           @default(0)
   passedTests     Int           @default(0)

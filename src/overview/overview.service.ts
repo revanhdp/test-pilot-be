@@ -33,6 +33,8 @@ export class OverviewService {
         where: { ...ownRuns, status: { in: ['PENDING', 'RUNNING'] } },
         orderBy: { createdAt: 'desc' },
         take: 3,
+        // Sign-in steps hold typed values (passwords); only the run detail shows them, redacted.
+        omit: { signIn: true },
         include: {
           project: { select: { id: true, name: true } },
           results: {
@@ -51,6 +53,7 @@ export class OverviewService {
         where: ownRuns,
         orderBy: { createdAt: 'desc' },
         take: 8,
+        omit: { signIn: true },
         include: { project: { select: { id: true, name: true } } },
       }),
       this.prisma.testResult.findMany({

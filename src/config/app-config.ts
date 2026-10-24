@@ -13,14 +13,35 @@ const envSchema = z.object({
   STORAGE_DIR: z.string().min(1).default('./storage'),
   RUNNER_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   BROWSER_HEADLESS: z.stringbool().default(true),
-  STEP_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  STEP_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(10_000),
   TEST_TIMEOUT_MS: z.coerce
     .number()
     .int()
     .min(5_000)
     .max(600_000)
     .default(120_000),
+  // AI features. Without a key they are switched off, nothing else changes.
+  GROQ_API_KEY: z.string().trim().optional(),
+  GROQ_MODEL: z.string().min(1).default('openai/gpt-oss-120b'),
+  AI_GENERATIONS_PER_HOUR: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1_000)
+    .default(10),
 });
+
+export interface AiConfig {
+  /** Absent when no provider key is configured. */
+  groqApiKey: string | null;
+  groqModel: string;
+  generationsPerHour: number;
+}
 
 export interface RunnerConfig {
   concurrency: number;
@@ -39,6 +60,7 @@ export class AppConfig {
   /** Absolute path. */
   readonly storageDir: string;
   readonly runner: RunnerConfig;
+  readonly ai: AiConfig;
 
   constructor(env: z.output<typeof envSchema>) {
     this.isProduction = env.NODE_ENV === 'production';
@@ -52,6 +74,11 @@ export class AppConfig {
       headless: env.BROWSER_HEADLESS,
       stepTimeoutMs: env.STEP_TIMEOUT_MS,
       testTimeoutMs: env.TEST_TIMEOUT_MS,
+    };
+    this.ai = {
+      groqApiKey: env.GROQ_API_KEY || null,
+      groqModel: env.GROQ_MODEL,
+      generationsPerHour: env.AI_GENERATIONS_PER_HOUR,
     };
   }
 

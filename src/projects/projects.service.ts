@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ArtifactStorage } from '../artifacts/artifact-storage.service.js';
 import { PrismaService } from '../database/prisma.service.js';
+import { signInStepsData } from '../environments/sign-in-steps.js';
 import type {
   CreateProjectInput,
   UpdateProjectInput,
@@ -65,7 +66,12 @@ export class ProjectsService {
         description: input.description ?? null,
         testSuites: { create: { name: DEFAULT_SUITE_NAME } },
         ...(input.environment && {
-          environments: { create: input.environment },
+          environments: {
+            create: {
+              ...input.environment,
+              signInSteps: signInStepsData(input.environment.signInSteps),
+            },
+          },
         }),
       },
     });

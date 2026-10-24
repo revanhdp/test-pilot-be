@@ -54,7 +54,7 @@ Sign in through the web app as **demo@testpilot.dev / testpilot**. To seed only 
 
 | Project | What a run gives |
 | --- | --- |
-| **Acme Store** | 6 tests: five pass; the checkout validation test fails (an invalid card number makes the payment API return HTTP 500, so the page shows a generic error). One of the passing tests opens a 404 page on purpose, with "Allow error status" turned on |
+| **Acme Store** | 7 tests: six pass; the checkout validation test fails (an invalid card number makes the payment API return HTTP 500, so the page shows a generic error). One passing test opens a 404 page on purpose, with "Allow error status" turned on, and one starts signed in (see [Signing in once per run](#signing-in-once-per-run)) |
 | **Acme Store (Bug Hunt)** | 9 tests written to fail: **8 FAILED, 1 SKIPPED**, each for a different reason |
 
 The Bug Hunt tests, and the bug each one finds (the test description in the UI says the same):
@@ -107,6 +107,9 @@ Environment variables (see `.env.example`), validated at startup:
 | `BROWSER_HEADLESS` | `true` | Run Chromium headless |
 | `STEP_TIMEOUT_MS` | `10000` | Timeout for each step |
 | `TEST_TIMEOUT_MS` | `120000` | Maximum duration of one test |
+| `GROQ_API_KEY` | — | Enables AI test generation. A free key from console.groq.com; without it AI endpoints answer `AI_NOT_CONFIGURED` and nothing else changes |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Needs strict JSON Schema support (`gpt-oss-20b`/`120b`) |
+| `AI_GENERATIONS_PER_HOUR` | `10` | Per-user cap, in memory |
 
 ## Architecture
 
@@ -119,6 +122,7 @@ src/
 ├── test-cases/    test cases and their ordered steps
 ├── test-steps/    the step contract (Zod schema)
 ├── browser/       Playwright engine: step execution, navigation policy, screenshots
+├── ai/            LLM provider (Groq), AI test generation, per-user limit
 ├── test-runs/     run creation, in-process runner, results
 ├── artifacts/     local artifact storage, served only to the owner
 ├── overview/      dashboard aggregates
@@ -147,13 +151,40 @@ Steps are data, never code. Everything is validated before it is stored or execu
 - **Locators**: `css`, `text`, `role` (+ accessible `name`), `label`, `placeholder`, `testId`. A bare string target is shorthand for CSS.
 - **Options**: `navigate` takes `allowErrorStatus` (boolean, default false), stored in the step's `options` column.
 
+### Signing in once per run
+
+Tests of pages behind a login don't each need their own sign-in steps:
+
+- An environment can have **sign-in steps** (`signInSteps`, same step contract, at most 30). End them with an assertion that proves the sign-in worked, such as `assertUrl /account`.
+- A test case with **`startSignedIn: true`** begins with the session those steps leave behind. Tests of the sign-in page itself, or of what signed-out visitors see, leave it off.
+- When a run contains signed-in tests, the runner performs the sign-in steps **once**, before any test, and keeps the session (cookies and local storage, Playwright's `storageState`) **in memory only**. Each signed-in test still gets its own fresh context, seeded with a copy of that session.
+- If the sign-in fails, every signed-in test **fails** with the reason (`Sign-in failed at step 5: …`) and a screenshot of the sign-in page; its own steps are marked skipped. A broken sign-in is a real failure, so it can't turn a run green. Signed-out tests run as usual.
+- Creating a run refuses signed-in tests when the environment has no sign-in steps.
+- The sign-in steps are frozen on the run (`signIn`), with their outcome. Typed values are replaced by `••••••` in run responses and left out of run lists. They are still stored as plain text in the environment, so use a dedicated test account.
+- Sessions can expire during a long run, and a test that signs out can end the shared session on the server: such tests should sign in with their own steps.
+
 ### Execution safeguards
 
 - `navigate` can only open http(s) pages on the environment's own origin.
 - `navigate` fails when the page answers HTTP 4xx/5xx (judged on the page finally reached, after redirects). A test that opens an error page on purpose sets `allowErrorStatus: true` on that step. Clicking a link is not checked this way: use an assertion after it.
 - Per-step timeout, per-test deadline, at most 100 steps, `wait` capped at 30 s.
-- One browser per run, a fresh browser context (cookies, storage) per test.
+- One browser per run, a fresh browser context (cookies, storage) per test. Signed-in tests start from a copy of the run's session, which never leaves memory.
 - `RUNNER_CONCURRENCY` caps simultaneous browsers.
+
+## AI test generation
+
+`POST /api/ai/generate-test` `{ environmentId, goal, path? }` proposes a test for a goal. **Nothing is saved**: the response is a draft (`title`, `expectedResult`, `steps`) for a person to review, and the browser engine still alone decides PASS/FAIL. `GET /api/ai/status` says whether AI is available.
+
+1. The page at `path` is opened (same origin rule as `navigate`, signed out) and reduced to its **accessibility tree** (roles and accessible names), so the model picks real elements instead of guessing selectors.
+2. The model answers in strict JSON Schema; the answer is converted to steps and **validated by the same schema as hand-written steps**. An invalid answer gets one repair attempt.
+3. The draft's actions (up to its first assertion) are tried on the page in a throwaway browser, the page *after* them is read, and the model rewrites the assertions to check what the **goal** says should happen, not what the page currently does (a page that shows "Thanks!" for an invalid email must make the test fail). `refined: false` plus a warning says when this stage could not run.
+
+The provider sits behind `LlmProvider`; Groq is chosen in `ai.module.ts` only. Free-tier rules:
+
+- A used-up provider limit (HTTP 429) **stops**: no retry loop and no fallback to another provider, so nothing is ever billed. The error is `AI_QUOTA_EXHAUSTED` with `retryAfterSeconds`. Keep the Groq account on the Free tier (no payment method) to make that a hard guarantee.
+- Groq's free tier allows 8,000 tokens per minute, so prompts are kept small (the outline is capped, a generation uses about 2,000 tokens).
+- `AI_USER_LIMIT` (429) is the per-user hourly cap; attempts that never reached the model are not counted. Other errors: `AI_NOT_CONFIGURED` (503), `AI_PAGE_UNREACHABLE` (422), `AI_PROVIDER_ERROR` / `AI_BAD_OUTPUT` (502).
+- Never put real credentials in a goal: it is sent to the provider. Free tiers may use submitted data to improve their models.
 
 ## API
 
@@ -170,6 +201,7 @@ GET    /test-runs         POST /test-runs         GET /test-runs/:id
 GET    /test-results/:id
 GET    /artifacts/:id/file
 GET    /overview
+GET    /ai/status         POST /ai/generate-test
 GET    /health
 ```
 
@@ -194,7 +226,7 @@ Browser execution currently runs inside the API process: fine on a development m
 | 1 Foundation | Auth, projects, environments | Done |
 | 2 Manual testing engine | Suites, test cases, steps, Playwright runner, results | Done |
 | 3 Evidence | Screenshots (done); console logs, network errors | In progress |
-| 4 AI integration | Provider abstraction, Gemini, AI test generation | Next |
+| 4 AI integration | Provider abstraction, Groq, AI test generation | In progress (API done) |
 | 5 AI failure analysis | Evidence → LLM → structured analysis | |
 | 6 Bug management | Bug reports from failures | |
 | 7 AI Explorer | Agent loop over approved browser tools | |
