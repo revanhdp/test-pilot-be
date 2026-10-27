@@ -8,7 +8,6 @@
  * Safe to re-run: each seeded project is recreated from scratch (with its
  * runs), and nothing else is touched.
  */
-import { hash } from '@node-rs/argon2';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { demoProjects } from '../demo-site/demo-tests.js';
 import { AppConfig } from '../src/config/app-config.js';
@@ -16,9 +15,9 @@ import { Prisma, PrismaClient } from '../src/generated/prisma/client.js';
 import { toStepCreateData } from '../src/test-steps/step-persistence.js';
 import { testStepsSchema } from '../src/test-steps/test-step.schema.js';
 
+// Sign in through Clerk with this email (verified) and the seeded projects are yours.
 const DEMO_USER = {
-  email: 'demo@testpilot.dev',
-  password: 'testpilot',
+  email: (process.env.SEED_USER_EMAIL ?? 'demo@testpilot.dev').toLowerCase(),
   name: 'Demo User',
 };
 const DEMO_SITE_URL = `http://localhost:${process.env.DEMO_SITE_PORT ?? 4100}`;
@@ -47,9 +46,10 @@ async function main() {
       where: { email: DEMO_USER.email },
       update: {},
       create: {
+        // Linked to the Clerk account with this verified email on first sign-in.
+        clerkId: `pending:${DEMO_USER.email}`,
         email: DEMO_USER.email,
         name: DEMO_USER.name,
-        passwordHash: await hash(DEMO_USER.password),
       },
     });
 
@@ -115,7 +115,7 @@ async function main() {
     }
 
     console.log(
-      `Sign in to TestPilot as ${DEMO_USER.email} / ${DEMO_USER.password}`,
+      `Sign in to TestPilot with a Clerk account whose verified email is ${DEMO_USER.email} (SEED_USER_EMAIL to change)`,
     );
     console.log(
       `Start the target site with: pnpm demo:site  (${DEMO_SITE_URL})`,

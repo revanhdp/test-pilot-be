@@ -22,7 +22,7 @@ Create project → configure URL → write test steps → run → Playwright dri
 | Database | PostgreSQL 17, Prisma 7 (`@prisma/adapter-pg`) |
 | Validation | Zod 4 |
 | Browser automation | Playwright (Chromium) |
-| Auth | Server-side sessions, Argon2 password hashing |
+| Auth | Clerk (session tokens verified with `@clerk/backend`) |
 | Tests | Vitest (unit + real-browser integration) |
 | Tooling | pnpm, oxlint, Prettier |
 
@@ -48,7 +48,7 @@ pnpm db:seed                 # demo account + the demo projects below
 pnpm demo:site               # the target website, on http://localhost:4100
 ```
 
-Sign in through the web app as **demo@testpilot.dev / testpilot**. To seed only one project (and leave the others and their runs alone): `pnpm db:seed bug-hunt`.
+Sign in through the web app with a Clerk account whose **verified** email is `demo@testpilot.dev` (set `SEED_USER_EMAIL` to seed for another email). The seeded user is linked to that account on first sign-in. To seed only one project (and leave the others and their runs alone): `pnpm db:seed bug-hunt`.
 
 `demo-site/` is a tiny storefront ("Acme Store") used both for trying TestPilot locally and by the integration tests. It ships with planted bugs, and two seeded projects test it:
 
@@ -100,8 +100,8 @@ Environment variables (see `.env.example`), validated at startup:
 | --- | --- | --- |
 | `PORT` | `4001` | API port |
 | `DATABASE_URL` | — | PostgreSQL connection string |
-| `APP_URL` | `http://localhost:4000` | Public origin of the web app (CORS, password-reset links) |
-| `SESSION_TTL_DAYS` | `14` | Session lifetime |
+| `APP_URL` | `http://localhost:4000` | Public origin of the web app (CORS, and the origin Clerk tokens must be issued for) |
+| `CLERK_SECRET_KEY` | — | Clerk secret key (dashboard.clerk.com → API keys). Required |
 | `STORAGE_DIR` | `./storage` | Where screenshots and other artifacts are written |
 | `RUNNER_CONCURRENCY` | `1` | Browsers running at the same time |
 | `BROWSER_HEADLESS` | `true` | Run Chromium headless |
@@ -115,7 +115,7 @@ Environment variables (see `.env.example`), validated at startup:
 
 ```
 src/
-├── auth/          register, login, logout, forgot/reset password, global session guard
+├── auth/          Clerk token guard, local user provisioning, `GET /auth/me`
 ├── projects/      projects (scoped to their owner)
 ├── environments/  target base URLs per project
 ├── test-suites/   grouping of test cases
@@ -126,13 +126,12 @@ src/
 ├── test-runs/     run creation, in-process runner, results
 ├── artifacts/     local artifact storage, served only to the owner
 ├── overview/      dashboard aggregates
-├── mail/          outgoing email (logs links in development)
 ├── config/        validated environment configuration
 ├── database/      Prisma service
 └── common/        validation pipe, shared schemas, health check
 ```
 
-- **Auth**: opaque session tokens in an httpOnly cookie; only their SHA-256 hash is stored. A global guard protects every route not marked `@Public()`. Logging out or resetting a password revokes sessions. Auth routes are rate limited.
+- **Auth**: [Clerk](https://clerk.com) owns sign-in, sign-up, passwords and sessions. A global guard protects every route not marked `@Public()`: it verifies the Clerk session token (`Authorization: Bearer`) and checks it was issued for `APP_URL`. The API can live on another origin than the web app: CORS allows `APP_URL` with credentials, and no cookie is used for auth. The first request of a Clerk user creates the local `users` row; a seeded or migrated user (`clerkId` = `pending:<email>`) is linked by email, only when Clerk reports that email as verified.
 - **Authorization**: every query is scoped through `project.userId`. Another user's resources return 404.
 - **Runs**: creating a run snapshots each test case, so later edits don't change past results. Runs execute in-process with bounded concurrency; a run interrupted by a restart is marked `ERROR` on the next boot. `BrowserService` / `TestRunnerService` is the boundary where a queue and a separate worker plug in later.
 
@@ -191,7 +190,6 @@ The provider sits behind `LlmProvider`; Groq is chosen in `ai.module.ts` only. F
 All routes are under `/api`. Lists that belong to a project take `?projectId=`.
 
 ```
-POST   /auth/register | /auth/login | /auth/logout | /auth/forgot-password | /auth/reset-password
 GET    /auth/me
 GET    /projects          POST /projects          GET | PATCH | DELETE /projects/:id
 GET    /environments      POST /environments      GET | PATCH | DELETE /environments/:id
@@ -209,13 +207,14 @@ GET    /health
 
 ## Deployment notes
 
-Designed for a small VPS (1 vCPU / 2 GB): Nginx serves the static web app and proxies `/api` to this service on `127.0.0.1:4001`. Set `NODE_ENV=production` (secure cookies) and `APP_URL` to the public origin. The API trusts the loopback proxy for client IPs.
+Designed for a small VPS (1 vCPU / 2 GB): Nginx serves the static web app and proxies `/api` to this service on `127.0.0.1:4001`. Set `NODE_ENV=production` and `APP_URL` to the public origin. The API trusts the loopback proxy for client IPs.
+
+To serve the API from its own origin instead (e.g. `https://api.example.com`), build the web app with `NUXT_PUBLIC_API_BASE=https://api.example.com` and keep `APP_URL` at the web app's origin: it is the only CORS origin and the only origin Clerk tokens are accepted for. Add the web origin to the Clerk instance's allowed origins.
 
 Browser execution currently runs inside the API process: fine on a development machine; on the VPS keep `RUNNER_CONCURRENCY=1` or move execution to a separate worker.
 
 ## Known limitations
 
-- No email provider yet: password-reset links are logged in development (and not at all in production).
 - Environment URLs are not restricted to public hosts. Block private and link-local ranges before opening registration publicly.
 - Per-step progress is recorded when each test finishes, not streamed live.
 

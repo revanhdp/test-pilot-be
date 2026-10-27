@@ -4,3 +4,6 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+minimumReleaseAgeExclude:
+  - '@clerk/backend@3.26.3'
+  - '@clerk/shared@4.42.0'

@@ -12,50 +12,19 @@ datasource db {
 // ─── Identity ────────────────────────────────────────────────────────────────
 
 model User {
-  id           String   @id @default(uuid(7)) @db.Uuid
-  email        String   @unique
-  name         String
-  passwordHash String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id        String   @id @default(uuid(7)) @db.Uuid
+  /// Clerk user id. `pending:<email>` marks a seeded user not yet linked to a Clerk account.
+  clerkId   String   @unique
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  sessions            Session[]
-  passwordResetTokens PasswordResetToken[]
-  projects            Project[]
-  createdTestCases    TestCase[]           @relation("TestCaseCreatedBy")
-  triggeredRuns       TestRun[]            @relation("TestRunTriggeredBy")
+  projects         Project[]
+  createdTestCases TestCase[] @relation("TestCaseCreatedBy")
+  triggeredRuns    TestRun[]  @relation("TestRunTriggeredBy")
 
   @@map("users")
-}
-
-/// Opaque, server-side sessions. Only a SHA-256 hash of the cookie token is stored.
-model Session {
-  id        String   @id @default(uuid(7)) @db.Uuid
-  userId    String   @db.Uuid
-  tokenHash String   @unique
-  expiresAt DateTime
-  userAgent String?
-  ipAddress String?
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("sessions")
-}
-
-model PasswordResetToken {
-  id        String    @id @default(uuid(7)) @db.Uuid
-  userId    String    @db.Uuid
-  tokenHash String    @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("password_reset_tokens")
 }
 
 // ─── Projects & environments ─────────────────────────────────────────────────

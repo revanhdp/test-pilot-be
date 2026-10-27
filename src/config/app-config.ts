@@ -9,7 +9,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4001),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   APP_URL: z.url().default('http://localhost:4000'),
-  SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(14),
+  // Clerk (auth). The secret key verifies session tokens.
+  CLERK_SECRET_KEY: z.string().trim().min(1, 'CLERK_SECRET_KEY is required'),
   STORAGE_DIR: z.string().min(1).default('./storage'),
   RUNNER_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   BROWSER_HEADLESS: z.stringbool().default(true),
@@ -52,22 +53,20 @@ export interface RunnerConfig {
 
 /** Typed, validated configuration. Injected by class token. */
 export class AppConfig {
-  readonly isProduction: boolean;
   readonly port: number;
   readonly databaseUrl: string;
   readonly appUrl: string;
-  readonly sessionTtlMs: number;
+  readonly clerkSecretKey: string;
   /** Absolute path. */
   readonly storageDir: string;
   readonly runner: RunnerConfig;
   readonly ai: AiConfig;
 
   constructor(env: z.output<typeof envSchema>) {
-    this.isProduction = env.NODE_ENV === 'production';
     this.port = env.PORT;
     this.databaseUrl = env.DATABASE_URL;
     this.appUrl = env.APP_URL.replace(/\/+$/, '');
-    this.sessionTtlMs = env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
+    this.clerkSecretKey = env.CLERK_SECRET_KEY;
     this.storageDir = resolve(env.STORAGE_DIR);
     this.runner = {
       concurrency: env.RUNNER_CONCURRENCY,
